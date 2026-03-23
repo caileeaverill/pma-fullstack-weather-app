@@ -23,12 +23,26 @@ export type DailyForecast = {
   temp_max: number[]
   temp_min: number[]
   precip_prob_max: number[]
+  /** ISO local times from Open-Meteo, aligned with `dates` */
+  sunrise?: string[]
+  sunset?: string[]
+  uv_index_max?: number[]
+}
+
+/** Open-Meteo Air Quality API — current hour */
+export type AirQualityCurrent = {
+  europeanAqi: number | null
+  usAqi: number | null
+  pm10: number | null
+  pm2_5: number | null
 }
 
 export type ForecastPayload = {
   timezone: string
   current: CurrentWeather
   daily: DailyForecast
+  /** Present when the air-quality API succeeds */
+  airQuality: AirQualityCurrent | null
 }
 
 export type WeatherLocation = {
@@ -46,6 +60,7 @@ export type WeatherApiSuccess = ForecastPayload & {
 
 const GEOCODE_BASE = "https://geocoding-api.open-meteo.com/v1/search"
 const FORECAST_BASE = "https://api.open-meteo.com/v1/forecast"
+const AIR_QUALITY_BASE = "https://air-quality-api.open-meteo.com/v1/air-quality"
 
 async function fetchJson<T>(url: string): Promise<T> {
   const res = await fetch(url, { cache: "no-store" })
@@ -130,7 +145,100 @@ type ForecastApiResponse = {
     temperature_2m_max: number[]
     temperature_2m_min: number[]
     precipitation_probability_max: number[]
+    sunrise?: string[]
+    sunset?: string[]
+    uv_index_max?: number[]
   }
+}
+
+function mapDailyFromApi(daily: ForecastApiResponse["daily"]): DailyForecast {
+  const base: DailyForecast = {
+    dates: daily.time,
+    weather_codes: daily.weather_code,
+    temp_max: daily.temperature_2m_max,
+    temp_min: daily.temperature_2m_min,
+    precip_prob_max: daily.precipitation_probability_max,
+  }
+  if (daily.sunrise?.length) base.sunrise = daily.sunrise
+  if (daily.sunset?.length) base.sunset = daily.sunset
+  if (daily.uv_index_max?.length) base.uv_index_max = daily.uv_index_max
+  return base
+}
+
+type AirQualityApiResponse = {
+  current?: {
+    european_aqi?: number
+    us_aqi?: number
+    pm10?: number
+    pm2_5?: number
+  }
+}
+
+export async function fetchAirQualityCurrent(
+  latitude: number,
+  longitude: number
+): Promise<AirQualityCurrent | null> {
+  try {
+    const url = `${AIR_QUALITY_BASE}?${new URLSearchParams({
+      latitude: String(latitude),
+      longitude: String(longitude),
+      current: "european_aqi,us_aqi,pm10,pm2_5",
+      timezone: "auto",
+    })}`
+    const data = await fetchJson<AirQualityApiResponse>(url)
+    const c = data.current
+    if (!c) return null
+    return {
+      europeanAqi: c.european_aqi ?? null,
+      usAqi: c.us_aqi ?? null,
+      pm10: c.pm10 ?? null,
+      pm2_5: c.pm2_5 ?? null,
+    }
+  } catch {
+    return null
+  }
+}
+
+const DAILY_VARS = [
+  "weather_code",
+  "temperature_2m_max",
+  "temperature_2m_min",
+  "precipitation_probability_max",
+  "sunrise",
+  "sunset",
+  "uv_index_max",
+].join(",")
+
+/** Keep only calendar days within [rangeStart, rangeEnd] (YYYY-MM-DD) */
+export function filterDailyForecast(
+  daily: DailyForecast,
+  rangeStart: string,
+  rangeEnd: string
+): DailyForecast {
+  const idxs: number[] = []
+  for (let i = 0; i < daily.dates.length; i++) {
+    const d = daily.dates[i]
+    if (d >= rangeStart && d <= rangeEnd) idxs.push(i)
+  }
+  if (idxs.length === 0) {
+    throw new Error("NO_DAYS_IN_RANGE")
+  }
+  const pick = <T>(arr: T[] | undefined) =>
+    arr ? idxs.map((i) => arr[i]) : undefined
+  const out: DailyForecast = {
+    dates: idxs.map((i) => daily.dates[i]),
+    weather_codes: idxs.map((i) => daily.weather_codes[i]),
+    temp_max: idxs.map((i) => daily.temp_max[i]),
+    temp_min: idxs.map((i) => daily.temp_min[i]),
+    precip_prob_max: idxs.map((i) => daily.precip_prob_max[i]),
+  }
+  const sr = pick(daily.sunrise)
+  const ss = pick(daily.sunset)
+  const uv = pick(daily.uv_index_max)
+  if (sr) out.sunrise = sr
+  if (ss) out.sunset = ss
+  if (uv) out.uv_index_max = uv
+  return out
 }
 
 export async function getForecast(
@@ -149,27 +257,62 @@ export async function getForecast(
       "wind_speed_10m",
       "wind_direction_10m",
     ].join(","),
-    daily: [
-      "weather_code",
-      "temperature_2m_max",
-      "temperature_2m_min",
-      "precipitation_probability_max",
-    ].join(","),
+    daily: DAILY_VARS,
     timezone: "auto",
     forecast_days: "5",
   })}`
 
-  const data = await fetchJson<ForecastApiResponse>(url)
+  const [data, airQuality] = await Promise.all([
+    fetchJson<ForecastApiResponse>(url),
+    fetchAirQualityCurrent(latitude, longitude),
+  ])
 
   return {
     timezone: data.timezone,
     current: data.current,
-    daily: {
-      dates: data.daily.time,
-      weather_codes: data.daily.weather_code,
-      temp_max: data.daily.temperature_2m_max,
-      temp_min: data.daily.temperature_2m_min,
-      precip_prob_max: data.daily.precipitation_probability_max,
-    },
+    daily: mapDailyFromApi(data.daily),
+    airQuality,
+  }
+}
+
+/**
+ * Uses past + forecast days from Open-Meteo, then filters to the requested inclusive range.
+ */
+export async function getForecastForDateRange(
+  latitude: number,
+  longitude: number,
+  rangeStart: string,
+  rangeEnd: string
+): Promise<ForecastPayload> {
+  const url = `${FORECAST_BASE}?${new URLSearchParams({
+    latitude: String(latitude),
+    longitude: String(longitude),
+    current: [
+      "temperature_2m",
+      "relative_humidity_2m",
+      "apparent_temperature",
+      "precipitation",
+      "weather_code",
+      "wind_speed_10m",
+      "wind_direction_10m",
+    ].join(","),
+    daily: DAILY_VARS,
+    timezone: "auto",
+    past_days: "7",
+    forecast_days: "16",
+  })}`
+
+  const [data, airQuality] = await Promise.all([
+    fetchJson<ForecastApiResponse>(url),
+    fetchAirQualityCurrent(latitude, longitude),
+  ])
+  const dailyFull = mapDailyFromApi(data.daily)
+  const daily = filterDailyForecast(dailyFull, rangeStart, rangeEnd)
+
+  return {
+    timezone: data.timezone,
+    current: data.current,
+    daily,
+    airQuality,
   }
 }

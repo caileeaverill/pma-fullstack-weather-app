@@ -1,7 +1,14 @@
 "use client"
 
-import { useCallback, useEffect, useId, useRef, useState } from "react"
-import { Loader2, MapPin, Navigation, Search } from "lucide-react"
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react"
+import { Download, Loader2, MapPin, Navigation, Search } from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -18,6 +25,8 @@ import type { GeocodeResult, WeatherApiSuccess } from "@/lib/open-meteo"
 import { formatDayLabel, windDirectionLabel } from "@/lib/weather-format"
 import { getWeatherVisual } from "@/lib/weather-codes"
 import { cn } from "@/lib/utils"
+import { SavedWeatherRecordsPanel } from "@/components/saved-weather-records"
+import { WeatherInsights } from "@/components/weather-insights"
 
 type ApiErrorBody = { error?: string }
 
@@ -216,6 +225,32 @@ export function WeatherApp() {
     : null
   const CurrentIcon = currentVisual?.Icon
 
+  const savePlaceContext = useMemo(
+    () =>
+      data
+        ? {
+            latitude: data.location.latitude,
+            longitude: data.location.longitude,
+            defaultStart: data.daily.dates[0] ?? "",
+            defaultEnd: data.daily.dates[data.daily.dates.length - 1] ?? "",
+          }
+        : null,
+    [data]
+  )
+
+  const downloadCurrentJson = useCallback(() => {
+    if (!data) return
+    const safeName = data.location.name.replace(/[^\w\-]+/g, "-").slice(0, 48)
+    const blob = new Blob([JSON.stringify(data, null, 2)], {
+      type: "application/json",
+    })
+    const a = document.createElement("a")
+    a.href = URL.createObjectURL(blob)
+    a.download = `skyline-weather-${safeName}.json`
+    a.click()
+    URL.revokeObjectURL(a.href)
+  }, [data])
+
   return (
     <div className="relative min-h-dvh overflow-hidden">
       <div
@@ -246,32 +281,47 @@ export function WeatherApp() {
               </a>
               .
             </p>
+            <p className="text-sm text-muted-foreground">By Cailee Averill for PMA Accelerators Technical Assessment 2026</p>
           </div>
-          <div className="flex shrink-0 items-center gap-1 rounded-lg border bg-card/80 p-1 text-xs shadow-sm backdrop-blur-sm">
-            <button
-              type="button"
-              onClick={() => setUnit("C")}
-              className={cn(
-                "rounded-md px-2.5 py-1 font-medium transition-colors",
-                unit === "C"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              )}
-            >
-              °C
-            </button>
-            <button
-              type="button"
-              onClick={() => setUnit("F")}
-              className={cn(
-                "rounded-md px-2.5 py-1 font-medium transition-colors",
-                unit === "F"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              )}
-            >
-              °F
-            </button>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <div className="flex shrink-0 items-center gap-1 rounded-lg border bg-card/80 p-1 text-xs shadow-sm backdrop-blur-sm">
+              <button
+                type="button"
+                onClick={() => setUnit("C")}
+                className={cn(
+                  "rounded-md px-2.5 py-1 font-medium transition-colors",
+                  unit === "C"
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                °C
+              </button>
+              <button
+                type="button"
+                onClick={() => setUnit("F")}
+                className={cn(
+                  "rounded-md px-2.5 py-1 font-medium transition-colors",
+                  unit === "F"
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                °F
+              </button>
+            </div>
+            {data && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5"
+                onClick={downloadCurrentJson}
+              >
+                <Download className="size-3.5" aria-hidden />
+                Export view (JSON)
+              </Button>
+            )}
           </div>
         </header>
 
@@ -533,6 +583,8 @@ export function WeatherApp() {
               </CardContent>
             </Card>
 
+            <WeatherInsights data={data} unit={unit} formatTemp={formatTemp} />
+
             <div>
               <h2 className="mb-3 font-heading text-lg font-semibold sm:text-xl">
                 5-day outlook
@@ -607,6 +659,8 @@ export function WeatherApp() {
             </AlertDescription>
           </Alert>
         )}
+
+        <SavedWeatherRecordsPanel placeContext={savePlaceContext} />
       </div>
     </div>
   )
