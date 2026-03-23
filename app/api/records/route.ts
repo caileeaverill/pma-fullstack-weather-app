@@ -4,6 +4,7 @@ import { NextResponse } from "next/server"
 import { getDb } from "@/lib/db"
 import { weatherRecords } from "@/lib/db/schema"
 import { createWeatherRecord } from "@/lib/weather-record-service"
+import { zodErrorPayload } from "@/lib/zod-api-error"
 import { createOrUpdateWeatherRecordBody } from "@/lib/weather-record-validation"
 
 export const runtime = "nodejs"
@@ -34,10 +35,7 @@ export async function POST(request: Request) {
 
   const parsed = createOrUpdateWeatherRecordBody.safeParse(json)
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Validation failed", details: parsed.error.flatten() },
-      { status: 400 }
-    )
+    return NextResponse.json(zodErrorPayload(parsed.error), { status: 400 })
   }
 
   try {
@@ -62,8 +60,10 @@ export async function POST(request: Request) {
       }
     }
     console.error("[records POST]", err)
+    const message =
+      err instanceof Error ? err.message : "Could not create the weather record."
     return NextResponse.json(
-      { error: "Could not create the weather record." },
+      { error: message.includes("SQLITE") ? "Database error while saving." : message },
       { status: 502 }
     )
   }

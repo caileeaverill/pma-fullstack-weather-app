@@ -9,34 +9,32 @@ const MAX_RANGE_DAYS = 14
 const PAST_DAYS_AVAILABLE = 7
 const FUTURE_DAYS_AVAILABLE = 16
 
-function utcDateString(d: Date): string {
-  const y = d.getUTCFullYear()
-  const m = String(d.getUTCMonth() + 1).padStart(2, "0")
-  const day = String(d.getUTCDate()).padStart(2, "0")
+/** Match `<input type="date">` (local calendar), not UTC — avoids false validation errors. */
+function localDateString(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, "0")
+  const day = String(d.getDate()).padStart(2, "0")
   return `${y}-${m}-${day}`
 }
 
-function parseDay(iso: string): number {
-  return Date.parse(`${iso}T12:00:00.000Z`)
+function parseLocalDay(iso: string): number {
+  const [y, m, d] = iso.split("-").map(Number)
+  return new Date(y, m - 1, d).getTime()
 }
 
 export function allowedDateWindow(): { min: string; max: string } {
   const now = new Date()
   const minD = new Date(
-    Date.UTC(
-      now.getUTCFullYear(),
-      now.getUTCMonth(),
-      now.getUTCDate() - PAST_DAYS_AVAILABLE
-    )
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate() - PAST_DAYS_AVAILABLE
   )
   const maxD = new Date(
-    Date.UTC(
-      now.getUTCFullYear(),
-      now.getUTCMonth(),
-      now.getUTCDate() + FUTURE_DAYS_AVAILABLE
-    )
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate() + FUTURE_DAYS_AVAILABLE
   )
-  return { min: utcDateString(minD), max: utcDateString(maxD) }
+  return { min: localDateString(minD), max: localDateString(maxD) }
 }
 
 export const createOrUpdateWeatherRecordBody = z
@@ -75,7 +73,7 @@ export const createOrUpdateWeatherRecordBody = z
   })
   .refine((d) => {
     const span =
-      (parseDay(d.endDate) - parseDay(d.startDate)) / 86400000 + 1
+      (parseLocalDay(d.endDate) - parseLocalDay(d.startDate)) / 86400000 + 1
     return span >= 1 && span <= MAX_RANGE_DAYS
   }, {
     message: `Date range must be 1–${MAX_RANGE_DAYS} calendar days (inclusive).`,
@@ -87,7 +85,7 @@ export const createOrUpdateWeatherRecordBody = z
       return d.startDate >= min && d.endDate <= max
     },
     {
-      message: `Dates must fall within the forecast window (${PAST_DAYS_AVAILABLE} days past through ${FUTURE_DAYS_AVAILABLE} days ahead, UTC).`,
+      message: `Dates must fall within the forecast window (${PAST_DAYS_AVAILABLE} days in the past through ${FUTURE_DAYS_AVAILABLE} days ahead, using your local calendar).`,
       path: ["startDate"],
     }
   )

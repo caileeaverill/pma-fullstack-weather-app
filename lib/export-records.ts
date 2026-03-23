@@ -2,6 +2,18 @@ import { PDFDocument, StandardFonts, rgb } from "pdf-lib"
 
 import type { WeatherRecordRow } from "@/lib/db/schema"
 
+/**
+ * pdf-lib StandardFonts only support WinAnsi; Unicode (em dash, arrows, accents)
+ * throws at runtime. Map to ASCII for reliable exports.
+ */
+function pdfSafeText(text: string, maxLen = 500): string {
+  let s = text.length > maxLen ? `${text.slice(0, maxLen)}...` : text
+  s = s.replace(/\u2013|\u2014/g, "-").replace(/\u2192/g, "->")
+  return s.replace(/[^\x20-\x7E]/g, (ch) =>
+    ch === "\n" || ch === "\r" || ch === "\t" ? " " : "?"
+  )
+}
+
 function csvEscape(s: string): string {
   if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`
   return s
@@ -70,7 +82,7 @@ export async function recordsToPdf(rows: WeatherRecordRow[]): Promise<Uint8Array
   const margin = 48
   const line = 14
 
-  page.drawText("Skyline Weather — saved snapshots", {
+  page.drawText(pdfSafeText("Skyline Weather - saved snapshots"), {
     x: margin,
     y,
     size: 16,
@@ -83,11 +95,15 @@ export async function recordsToPdf(rows: WeatherRecordRow[]): Promise<Uint8Array
     page.drawText("No records to export.", { x: margin, y, size: 11, font })
   } else {
     for (const r of rows) {
+      const lat = Number(r.latitude)
+      const lon = Number(r.longitude)
       const block = [
-        r.locationName,
-        `${r.dateRangeStart} → ${r.dateRangeEnd}`,
-        `${r.latitude.toFixed(4)}, ${r.longitude.toFixed(4)}`,
-        `Updated: ${r.updatedAt}`,
+        pdfSafeText(String(r.locationName)),
+        pdfSafeText(`${r.dateRangeStart} -> ${r.dateRangeEnd}`),
+        pdfSafeText(
+          `${Number.isFinite(lat) ? lat.toFixed(4) : "?"}, ${Number.isFinite(lon) ? lon.toFixed(4) : "?"}`
+        ),
+        pdfSafeText(`Updated: ${r.updatedAt}`),
       ]
       for (const lineText of block) {
         if (y < margin + 40) {

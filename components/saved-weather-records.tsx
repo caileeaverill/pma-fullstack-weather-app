@@ -35,21 +35,20 @@ type WeatherRecordRow = {
   updatedAt: string
 }
 
-function utcISODate(d: Date): string {
-  const y = d.getUTCFullYear()
-  const m = String(d.getUTCMonth() + 1).padStart(2, "0")
-  const day = String(d.getUTCDate()).padStart(2, "0")
+/** Align with `<input type="date">` and server validation (local calendar). */
+function localISODate(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, "0")
+  const day = String(d.getDate()).padStart(2, "0")
   return `${y}-${m}-${day}`
 }
 
 function defaultRange(): { start: string; end: string } {
   const now = new Date()
-  const end = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 4)
-  )
+  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 4)
   return {
-    start: utcISODate(now),
-    end: utcISODate(end),
+    start: localISODate(now),
+    end: localISODate(end),
   }
 }
 
@@ -151,7 +150,10 @@ export function SavedWeatherRecordsPanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       })
-      const json = (await res.json()) as { error?: string; record?: WeatherRecordRow }
+      const json = (await res.json()) as {
+        error?: string
+        record?: WeatherRecordRow
+      }
       if (!res.ok) {
         setError(json.error ?? "Save failed.")
         return

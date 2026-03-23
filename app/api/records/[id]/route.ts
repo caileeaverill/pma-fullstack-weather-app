@@ -5,6 +5,7 @@ import {
   getWeatherRecordById,
   updateWeatherRecord,
 } from "@/lib/weather-record-service"
+import { zodErrorPayload } from "@/lib/zod-api-error"
 import { createOrUpdateWeatherRecordBody } from "@/lib/weather-record-validation"
 
 export const runtime = "nodejs"
@@ -39,10 +40,7 @@ export async function PATCH(request: Request, context: RouteContext) {
 
   const parsed = createOrUpdateWeatherRecordBody.safeParse(json)
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Validation failed", details: parsed.error.flatten() },
-      { status: 400 }
-    )
+    return NextResponse.json(zodErrorPayload(parsed.error), { status: 400 })
   }
 
   try {
